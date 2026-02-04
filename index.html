@@ -3,6 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <!-- 跨域拉流时可按需设置：no-referrer 可避免部分服务端校验 Referer -->
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
   <title>从 Oryx 拉流播放</title>
   <style>
     * { box-sizing: border-box; }
@@ -93,7 +95,7 @@
     <button id="btnPlay">播放</button>
     <button id="btnStop" disabled>停止</button>
   </div>
-  <p class="tip">此页从 Oryx 拉流播放，流由 SRS 推至 Oryx。需用 <strong>HTTPS 或 localhost</strong> 打开。</p>
+  <p class="tip">此页从 Oryx 拉流播放，流由 SRS 推至 Oryx。需用 <strong>HTTPS 或 localhost</strong> 打开。部署在 GitHub Pages 等跨域环境时，Oryx 服务端需配置 CORS 允许你的页面来源（如 <code>https://szpsun.github.io</code>）。</p>
   <section class="play-urls">
     <h2 class="play-title">Oryx 其他协议</h2>
     <p class="play-item"><strong>HTTP-FLV</strong> <a href="#" id="linkFlv" target="_blank" rel="noopener">-</a></p>
@@ -104,7 +106,7 @@
   <script>
     (function () {
       // ========== 配置：改成你的 Oryx 地址（不要末尾斜杠） ==========
-      var ORYX_BASE = 'https://your-oryx-domain.com';
+      var ORYX_BASE = 'https://livenew.h3r.website';
       var ORYX_APP = 'live';
       var ORYX_STREAM = 'livestream';
 
@@ -148,7 +150,8 @@
           var res = await fetch(WHEP_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/sdp' },
-            body: ''
+            body: '',
+            referrerPolicy: 'strict-origin-when-cross-origin' // 与页面 meta 一致；若服务端拒 Referer 可改为 'no-referrer'
           });
           if (!res.ok) {
             var text = await res.text();
@@ -180,7 +183,8 @@
           var patchRes = await fetch(whepResourceUrl, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/sdp' },
-            body: pc.localDescription.sdp
+            body: pc.localDescription.sdp,
+            referrerPolicy: 'strict-origin-when-cross-origin'
           });
           if (!patchRes.ok) {
             var t = await patchRes.text();
