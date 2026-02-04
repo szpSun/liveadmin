@@ -1,115 +1,215 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>WebRTC 仅音频推流 (WHIP)</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>从 Oryx 拉流播放</title>
   <style>
     * { box-sizing: border-box; }
-    body { font-family: system-ui, sans-serif; max-width: 480px; margin: 2rem auto; padding: 0 1rem; }
-    h1 { font-size: 1.25rem; }
-    .url { width: 100%; padding: 8px; font-size: 12px; margin-bottom: 12px; }
-    button { padding: 10px 20px; margin-right: 8px; margin-bottom: 8px; cursor: pointer; }
-    button:disabled { opacity: 0.6; cursor: not-allowed; }
-    .status { margin-top: 16px; padding: 12px; background: #f0f0f0; border-radius: 8px; font-size: 14px; }
-    .error { color: #c00; }
-    .ok { color: #080; }
+    body {
+      margin: 0;
+      padding: 16px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background: #1a1a2e;
+      color: #eee;
+      min-height: 100vh;
+    }
+    h1 { font-size: 18px; margin: 0 0 12px; color: #fff; }
+    .player-wrap {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 16/9;
+      max-height: 50vh;
+      background: #0f0f1a;
+      border-radius: 12px;
+      overflow: hidden;
+      margin-bottom: 12px;
+    }
+    #remoteVideo {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      background: #000;
+    }
+    .player-placeholder {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #666;
+      font-size: 14px;
+      text-align: center;
+      padding: 16px;
+    }
+    .status {
+      padding: 10px 12px;
+      background: rgba(255,255,255,0.08);
+      border-radius: 8px;
+      font-size: 13px;
+      margin-bottom: 12px;
+      min-height: 40px;
+    }
+    .status.error { color: #ff6b6b; }
+    .status.ok { color: #51cf66; }
+    .status.pending { color: #ffd43b; }
+    .btn-wrap { display: flex; gap: 12px; margin-bottom: 12px; }
+    button {
+      flex: 1;
+      padding: 14px 20px;
+      font-size: 16px;
+      font-weight: 600;
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: opacity 0.2s;
+    }
+    button:active { opacity: 0.8; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    #btnPlay { background: linear-gradient(135deg, #2f9e44, #228be6); color: #fff; }
+    #btnStop { background: #495057; color: #fff; }
+    .tip { font-size: 12px; color: #868e96; margin-top: 12px; line-height: 1.5; }
+    .play-urls {
+      margin-top: 16px;
+      padding: 12px;
+      background: rgba(255,255,255,0.06);
+      border-radius: 8px;
+      font-size: 12px;
+    }
+    .play-title { font-size: 14px; margin: 0 0 10px; color: #fff; }
+    .play-item { margin: 6px 0; word-break: break-all; }
+    .play-item a { color: #74c0fc; text-decoration: none; }
+    .play-item a:active { opacity: 0.8; }
   </style>
 </head>
 <body>
-  <h1>WebRTC 仅音频推流 (WHIP)</h1>
-  <p>只采集麦克风，不采集摄像头，推送到 SRS WHIP 地址。</p>
-  <input type="text" class="url" id="whipUrl" placeholder="WHIP 推流地址"
-    value="https://live.h3r.website/rtc/v1/whip/?app=live&stream=audio&secret=125be909b4d042e1872fc5bf7507821d" />
-  <div>
-    <button id="btnStart">开始推流（仅音频）</button>
-    <button id="btnStop" disabled>停止推流</button>
+  <h1>从 Oryx 拉流播放</h1>
+  <div class="player-wrap">
+    <video id="remoteVideo" autoplay playsinline></video>
+    <div class="player-placeholder" id="placeholder">点击「播放」从 Oryx 拉取直播流（WebRTC）</div>
   </div>
-  <div class="status" id="status">未推流</div>
+  <div class="status pending" id="status">就绪</div>
+  <div class="btn-wrap">
+    <button id="btnPlay">播放</button>
+    <button id="btnStop" disabled>停止</button>
+  </div>
+  <p class="tip">此页从 Oryx 拉流播放，流由 SRS 推至 Oryx。需用 <strong>HTTPS 或 localhost</strong> 打开。</p>
+  <section class="play-urls">
+    <h2 class="play-title">Oryx 其他协议</h2>
+    <p class="play-item"><strong>HTTP-FLV</strong> <a href="#" id="linkFlv" target="_blank" rel="noopener">-</a></p>
+    <p class="play-item"><strong>HLS</strong> <a href="#" id="linkHls" target="_blank" rel="noopener">-</a></p>
+    <p class="play-item"><strong>WebRTC (WHEP)</strong> <a href="#" id="linkWhep" target="_blank" rel="noopener">-</a></p>
+  </section>
 
   <script>
     (function () {
-      const whipUrlInput = document.getElementById('whipUrl');
-      const btnStart = document.getElementById('btnStart');
-      const btnStop = document.getElementById('btnStop');
-      const statusEl = document.getElementById('status');
+      // ========== 配置：改成你的 Oryx 地址（不要末尾斜杠） ==========
+      var ORYX_BASE = 'https://your-oryx-domain.com';
+      var ORYX_APP = 'live';
+      var ORYX_STREAM = 'livestream';
 
-      let pc = null;
-      let audioStream = null;
+      var WHEP_URL = ORYX_BASE + '/rtc/v1/whep/?app=' + ORYX_APP + '&stream=' + ORYX_STREAM;
+      var FLV_URL = ORYX_BASE + '/live/' + ORYX_STREAM + '.flv';
+      var HLS_URL = ORYX_BASE + '/live/' + ORYX_STREAM + '.m3u8';
 
-      function setStatus(msg, isError) {
-        statusEl.textContent = msg;
-        statusEl.className = 'status ' + (isError ? 'error' : 'ok');
+      var remoteVideo = document.getElementById('remoteVideo');
+      var placeholder = document.getElementById('placeholder');
+      var statusEl = document.getElementById('status');
+      var btnPlay = document.getElementById('btnPlay');
+      var btnStop = document.getElementById('btnStop');
+      var linkFlv = document.getElementById('linkFlv');
+      var linkHls = document.getElementById('linkHls');
+      var linkWhep = document.getElementById('linkWhep');
+
+      linkFlv.href = FLV_URL;
+      linkFlv.textContent = FLV_URL;
+      linkHls.href = HLS_URL;
+      linkHls.textContent = HLS_URL;
+      linkWhep.href = WHEP_URL;
+      linkWhep.textContent = WHEP_URL;
+
+      var pc = null;
+      var whepResourceUrl = null;
+
+      function setStatus(text, type) {
+        statusEl.textContent = text;
+        statusEl.className = 'status ' + (type || 'pending');
       }
 
-      async function startPublish() {
-        const whipUrl = whipUrlInput.value.trim();
-        if (!whipUrl) {
-          setStatus('请填写 WHIP 推流地址', true);
-          return;
-        }
+      function setPlayerVisible(visible) {
+        remoteVideo.style.display = visible ? 'block' : 'none';
+        placeholder.style.display = visible ? 'none' : 'flex';
+      }
 
-        btnStart.disabled = true;
-        setStatus('正在请求麦克风（仅音频）…');
-
+      async function startPlay() {
+        btnPlay.disabled = true;
+        setStatus('正在连接 Oryx…', 'pending');
         try {
-          // 只采集音频，不采集视频
-          audioStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-          setStatus('已获取麦克风，正在连接 WHIP…');
-
+          var res = await fetch(WHEP_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/sdp' },
+            body: ''
+          });
+          if (!res.ok) {
+            var text = await res.text();
+            throw new Error('Oryx 返回 ' + res.status + (text ? ': ' + text.slice(0, 150) : ''));
+          }
+          whepResourceUrl = res.headers.get('Location') || res.url;
+          var offerSdp = await res.text();
           pc = new RTCPeerConnection({
             iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
           });
-
-          audioStream.getTracks().forEach(function (track) {
-            pc.addTrack(track, audioStream);
+          pc.ontrack = function (e) {
+            if (e.streams && e.streams[0]) {
+              remoteVideo.srcObject = e.streams[0];
+            } else if (e.track) {
+              var s = new MediaStream();
+              s.addTrack(e.track);
+              remoteVideo.srcObject = s;
+            }
+            setPlayerVisible(true);
+          };
+          pc.addEventListener('connectionstatechange', function () {
+            if (pc && pc.connectionState === 'failed') {
+              setStatus('连接失败，请检查 Oryx 地址与网络', 'error');
+            }
           });
-
-          const offer = await pc.createOffer();
-          await pc.setLocalDescription(offer);
-
-          const response = await fetch(whipUrl, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/sdp'
-            },
-            body: offer.sdp
+          await pc.setRemoteDescription({ type: 'offer', sdp: offerSdp });
+          var answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+          var patchRes = await fetch(whepResourceUrl, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/sdp' },
+            body: pc.localDescription.sdp
           });
-
-          if (!response.ok) {
-            throw new Error('WHIP 请求失败: ' + response.status + ' ' + response.statusText);
+          if (!patchRes.ok) {
+            var t = await patchRes.text();
+            throw new Error('PATCH ' + patchRes.status + (t ? ': ' + t.slice(0, 100) : ''));
           }
-
-          const answerSdp = await response.text();
-          await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
-
-          setStatus('推流中（仅音频）');
+          setStatus('已从 Oryx 拉流，正在播放', 'ok');
           btnStop.disabled = false;
         } catch (e) {
-          setStatus('错误: ' + (e.message || e), true);
-          stopPublish();
-          btnStart.disabled = false;
+          setStatus('拉流失败: ' + (e.message || e.name), 'error');
+          stopPlay();
+          btnPlay.disabled = false;
         }
       }
 
-      function stopPublish() {
-        if (audioStream) {
-          audioStream.getTracks().forEach(function (t) { t.stop(); });
-          audioStream = null;
-        }
+      function stopPlay() {
         if (pc) {
           pc.close();
           pc = null;
         }
-        setStatus('已停止推流');
-        btnStart.disabled = false;
+        whepResourceUrl = null;
+        remoteVideo.srcObject = null;
+        setPlayerVisible(false);
+        setStatus('已停止', 'pending');
+        btnPlay.disabled = false;
         btnStop.disabled = true;
       }
 
-      btnStart.addEventListener('click', startPublish);
-      btnStop.addEventListener('click', function () {
-        stopPublish();
-      });
+      btnPlay.addEventListener('click', startPlay);
+      btnStop.addEventListener('click', stopPlay);
     })();
   </script>
 </body>
